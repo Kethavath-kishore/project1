@@ -1,119 +1,185 @@
-const userDB = require( '../model/userslogin' );
+const userDetails = require( './beanClasses/users' );
+const connection = require( "../utilities/connections" )
+const Booking = require( './beanClasses/booking' )
 
-const userService = {}
+const usersDB = {}
 
-//login a user
-userService.login = ( contactNo, userPassword ) => {
-    return userDB.checkUser( contactNo ).then( ( user ) => {
-        if( user == null ) {
-            let err = new Error( "Enter registered contact number! If not registered, please register" )
-            err.status = 404
-            throw err
-        }
-        else{
-            return userDB.getPassword( contactNo ).then( ( password ) => {
-                if( password != userPassword ) {
-                    let err = new Error( "Incorrect password" )
-                    err.status = 406
-                    throw err
-                }
-                else{
-                    return user;
-                }
-            } )
-        }
+usersDB.generateUserId = () => {
+    return connection.getUserCollection().then( ( collection ) => {
+        return collection.distinct( "userId" ).then( ( userId ) => {
+            let ids = []
+            for( let id of userId ) {
+                ids.push( id.substr( 1 ) )
+            }
+            let Id = Math.max( ...ids )
+            return"U" + ( Id + 1 )
+        } )
+    } )
+}
+usersDB.generateBookingId = () => {
+    return connection.getBookingCollection().then( ( collection ) => {
+        return collection.distinct( "bookingId" ).then( ( bookingId ) => {
+            let ids = []
+            for( let id of bookingId ) {
+                ids.push( id.substr( 1 ) )
+            }
+            let bId = Math.max( ...ids )
+            return"B" + ( bId + 1 )
+        } )
     } )
 }
 
-userService.registeruser = ( userObj ) => {
-    return userDB.validateUser( userObj.contactNo ).then( ( user ) => {
-        if( user ) {
-            let err = new Error( "User already exits with given contact number" )
-            err.status = 406
-            throw err;
-        } else{
-            return userDB.registerUser( userObj ).then( ( data ) => {
-                if( data.length > 0 ) {
-                    return data
+
+usersDB.checkUser = ( contactNo ) => {
+    return connection.getUserCollection().then( ( collection ) => {
+        return collection.findOne( { "contactNo": contactNo } ).then( ( customerContact ) => {
+            if( customerContact ) {
+                return new userDetails( customerContact );
+            }
+            else return null;
+        } )
+    } )
+}
+
+usersDB.getPassword = ( contactNo ) => {
+    return connection.getUserCollection().then( ( collection ) => {
+        return collection.find( { "contactNo": contactNo }, { _id: 0, password: 1 } ).then( ( password ) => {
+            if( password.length != 0 )
+                return password[0].password;
+            else
+                return null;
+        } )
+    } )
+}
+
+usersDB.validateUser = ( contactNo ) => {
+    return connection.getUserCollection().then( ( collection ) => {
+        return collection.find( { contactNo: contactNo }, { _id: 0, userId: 1 } ).then( ( userId ) => {
+            if( userId.length != 0 ) {
+                return userId[0].userId
+            } else return null
+        } )
+    } )
+}
+
+usersDB.registerUser = ( Obj ) => {
+    return connection.getUserCollection().then( ( collection ) => {
+        return usersDB.generateUserId().then( ( userId ) => {
+            let userObj = new userDetails( Obj )
+            userObj.userId = userId
+            return collection.insertMany( [userObj] ).then( ( res ) => {
+                if( res.length > 0 ) {
+                    return res
+                } else return null
+            } )
+        } )
+    } )
+}
+
+usersDB.getHotDeals = () => {
+    return connection.getHotdealCollection().then( ( collection ) => {
+        return collection.find( {}, { _id: 0, "__v": 0 } ).then( ( deals ) => {
+            if( deals.length > 0 ) {
+                return deals
+            } else{
+                return null
+            }
+        } )
+    } )
+}
+
+usersDB.getDestinationByContinent = ( continent ) => {
+    return connection.getDestinationCollection().then( ( collection ) => {
+        return collection.find(
+            { "$or": [{ "continent": { $regex: continent } }, { "name": { $regex: continent } }] },
+            { _id: 0, "__v": 0 }
+        ).then( ( dests ) => {
+            if( dests.length > 0 ) {
+                return dests
+            } else{
+                return null
+            }
+        } )
+    } )
+}
+
+usersDB.getDestinationById = ( destId ) => {
+    return connection.getDestinationCollection().then( ( collection ) => {
+        return collection.find( { "destinationId": destId }, { _id: 0, "__v": 0 } ).then( ( destination ) => {
+            if( destination.length > 0 ) {
+                return destination
+            } else{
+                return connection.getHotdealCollection().then( ( collection ) => {
+                    return collection.find( { "destinationId": destId }, { _id: 0, "__v": 0 } ).then( ( hotDeal ) => {
+                        if( hotDeal.length > 0 ) {
+                            return hotDeal
+                        } else{
+                            return null
+                        }
+                    } )
+                } )
+            }
+        } )
+    } )
+}
+
+usersDB.bookPackage = ( bookPack ) => {
+    return connection.getBookingCollection().then( ( bcollection ) => {
+        return usersDB.generateBookingId().then( ( bId ) => {
+            let bookingObj = new Booking( bookPack )
+            bookingObj.bookingId = bId
+            return bcollection.insertMany( [bookingObj] ).then( ( bData ) => {
+                if( bData.length > 0 ) {
+                    return connection.getUserCollection().then( ( ucollection ) => {
+                        return ucollection.update( { "userId": bookPack.userId }, { $push: { "bookings": bId } } ).then( ( data ) => {
+                            if( data.nModified > 0 ) {
+                                return bData
+                            } else{
+                                return null
+                            }
+                        } )
+                    } )
                 } else{
-                    let err = new Error( "Registration failed! Please try again" )
-                    err.status = 500
-                    throw err
+                    return null
                 }
             } )
-        }
+        } )
     } )
 }
 
-userService.getHotDeals = () => {
-    return userDB.getHotDeals().then( ( deals ) => {
-        if( deals.length > 0 ) {
-            return deals
-        } else{
-            let err = new Error( "No HotDeals present at the moment!" )
-            err.status = 404
-            throw err;
-        }
+usersDB.getBookingsOfUser = ( userId ) => {
+    return connection.getBookingCollection().then( ( collection ) => {
+        return collection.find( { userId: userId }, { __v: 0, _id: 0 } ).then( ( bookings ) => {
+            if( bookings.length > 0 ) {
+                return bookings
+            } else{
+                return null
+            }
+        } )
     } )
 }
 
-userService.getDestinationByContinent = ( continent ) => {
-    return userDB.getDestinationByContinent( continent ).then( ( dests ) => {
-        if( dests.length > 0 ) {
-            return dests
-        } else{
-            let err = new Error( "Sorry we are not serving at this location!" )
-            err.status = 404
-            throw err;
-        }
+usersDB.cancelBooking = ( bookingId ) => {
+    return connection.getBookingCollection().then( ( collection ) => {
+        return collection.find( { "bookingId": bookingId }, { __v: 0, _id: 0 } ).then( ( booking ) => {
+            return connection.getUserCollection().then( ( ucollection ) => {
+                const userId = booking[0].userId
+                return ucollection.update( { "userId": userId }, { $pull: { "bookings": bookingId } } ).then( ( update ) => {
+                    if( update.nModified > 0 ) {
+                        return collection.deleteOne( { "bookingId": bookingId } ).then( ( data ) => {
+                            if( data.deletedCount > 0 ) {
+                                return data
+                            } else{
+                                return null
+                            }
+                        } )
+                    } else{
+                        return null
+                    }
+                } )
+            } )
+        } )
     } )
 }
 
-userService.getDestinationById = ( destId ) => {
-    return userDB.getDestinationById( destId ).then( ( destination ) => {
-        if( destination.length > 0 ) {
-            return destination
-        } else{
-            let err = new Error( "Sorry we are not serving at this location!" )
-            err.status = 404
-            throw err;
-        }
-    } )
-}
-
-userService.bookPackage = ( bookPack ) => {
-    return userDB.bookPackage( bookPack ).then( ( bData ) => {
-        if( bData.length > 0 ) {
-            return bData
-        } else{
-            let err = new Error( "Booking failed please try again!!!" )
-            err.status = 500
-            throw err
-        }
-    } )
-}
-userService.getBookingsOfUser = ( userId ) => {
-    return userDB.getBookingsOfUser( userId ).then( ( bookings ) => {
-        if( bookings.length > 0 ) {
-            return bookings
-        } else{
-            let err = new Error( "Sorry no bookings available" )
-            err.status = 404
-            throw err
-        }
-    } )
-}
-
-userService.cancelBooking = ( bookingId ) => {
-    return userDB.cancelBooking( bookingId ).then( ( data ) => {
-        if( data.deletedCount > 0 ) {
-            return data
-        } else{
-            let err = new Error( "Sorry unable to delete Booking!!!" )
-            err.status = 500
-            throw err
-        }
-    } )
-}
-
-module.exports = userService
+module.exports = usersDB;
